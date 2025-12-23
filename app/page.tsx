@@ -38,7 +38,7 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   },
   { name: "STATUS DI", type: "manual" },
   { name: "VALOR USD CLIENTE", type: "cell", cellAddress: "H24" },
-  { name: "TX  PREVIA CLIENTE", type: "manual" },
+  { name: "TX  PREVIA CLIENTE", type: "cell", cellAddress: "K8" },
   { name: "FECHAMENTO BCO", type: "cell", cellAddress: "H24" },
   { name: "TX", type: "manual" },
   {

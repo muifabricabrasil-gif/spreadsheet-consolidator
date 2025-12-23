@@ -7,9 +7,10 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
-  generator: "v0.app",
+  title: "Consolidador de Planilhas",
+  description:
+    "Sistema automatizado para extrair dados específicos de planilhas avulsas e consolidar na master com mapeamento inteligente de células",
+  generator: "Next.js",
   icons: {
     icon: [
       {
@@ -35,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="pt-br">
       <body className={`font-sans antialiased`} suppressHydrationWarning>
         {children}
         <Analytics />
