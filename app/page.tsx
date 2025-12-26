@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 import { AuroraBackground } from "@/components/ui/aurora-background";
 
 type FieldConfig = {
@@ -30,6 +30,7 @@ type FieldConfig = {
 };
 
 const MASTER_STRUCTURE: FieldConfig[] = [
+  // SEÇÃO - VALOR ADUNANEIRO - DI (índices 0-4)
   { name: "COD. CLIENTE", type: "manual" },
   {
     name: "VALOR FOB. DI",
@@ -38,7 +39,9 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   },
   { name: "STATUS DI", type: "manual" },
   { name: "VALOR USD CLIENTE", type: "cell", cellAddress: "H24" },
-  { name: "TX  PREVIA CLIENTE", type: "cell", cellAddress: "K8" },
+  { name: "TX  PREVIA CLIENTE", type: "manual" },
+
+  // SEÇÃO - FECHAMENTO CAMBIO D.I - MARCHA (índices 5-12)
   { name: "FECHAMENTO BCO", type: "cell", cellAddress: "H24" },
   { name: "TX", type: "manual" },
   {
@@ -55,16 +58,24 @@ const MASTER_STRUCTURE: FieldConfig[] = [
     formula: "=SOMA([@[VALOR FOB. DI]]-[@[VALOR USD EFETIVO]])",
   },
   { name: "OBSERVAÇÃO", type: "manual" },
+
+  // SEÇÃO - PGTO ANDIAN. NACIONALIZAÇÃO (índice 13)
   { name: "DESP. OPE. ENVI. NEEMAN", type: "manual" },
+
+  // SEÇÃO - DESPESAS ADUNEIRAS (índices 14-16)
   { name: "SISCOMEX", type: "cell", cellAddress: "H26" },
   { name: "MARINHA MERCANTE", type: "cell", cellAddress: "H27" },
   { name: "OUTRAS DESP. ADUAN.", type: "cell", cellAddress: "H28" },
+
+  // SEÇÃO - IMPOSTO (índices 17-22)
   { name: "IMPOSTO IMPOR. (I.I)", type: "cell", cellAddress: "K32" },
   { name: "PROG. INTE. SOC. (PIS)", type: "cell", cellAddress: "K33" },
   { name: "CONT. FINAN. SOC. COFINS", type: "cell", cellAddress: "K34" },
   { name: "IMP. PROD. IMP. (IPI)", type: "cell", cellAddress: "K35" },
   { name: "DUMPING", type: "cell", cellAddress: "K36" },
   { name: "IMP. CIRC. MERC. (ICMS)", type: "cell", cellAddress: "K37" },
+
+  // SEÇÃO - DESPESAS OPERACIONAIS (índices 23-33)
   { name: "ARMAZ. ZONA PRIM.", type: "cell", cellAddress: "H41" },
   { name: "DIF. FRETE INTER", type: "cell", cellAddress: "H42" },
   { name: "DESPACHANTE", type: "cell", cellAddress: "H43" },
@@ -76,6 +87,8 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   { name: "FRETE AO CLIENTE", type: "cell", cellAddress: "H49" },
   { name: "RETIFICAÇÃO D.I", type: "manual" },
   { name: "JANELA ESPECIAL", type: "manual" },
+
+  // SEÇÃO - OPERAÇÃO TRADING (índices 34-44)
   { name: "CREDITO PIS", type: "cell", cellAddress: "K57" },
   { name: "CREDITO COFINS", type: "cell", cellAddress: "K58" },
   { name: "CREDITO IPI", type: "cell", cellAddress: "K59" },
@@ -87,16 +100,26 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   { name: "DEBITO ICMS", type: "cell", cellAddress: "K65" },
   { name: "VALOR SEM IPI", type: "cell", cellAddress: "K67" },
   { name: "IPI DESTACADO", type: "cell", cellAddress: "K68" },
+
+  // SEÇÃO - PGTO NACIONA.NEEMAN (índice 45)
   {
     name: "PGTO EFETIVO NEEMAN",
     type: "formula",
-    formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
+    formula: "=SOMA(Tabela1[@[SISCOMEX]:[JANELA ESPECIAL]])",
   },
+
+  // SEÇÃO - STATUS NEEMAN (índice 46)
   { name: "STATUS NEEMAN", type: "manual" },
+
+  // SEÇÃO - PGTO MARCHA ARMAZ (índices 47-48)
   { name: "DESP. FRETE", type: "cell", cellAddress: "H49" },
   { name: "DESP. Escolta", type: "cell", cellAddress: "H47" },
+
+  // SEÇÃO - IMPOSTOS IR CSLL (índices 49-50)
   { name: "IMPOSTOS  IR", type: "cell", cellAddress: "K81" },
   { name: "IMPOSTO CSLL", type: "cell", cellAddress: "K82" },
+
+  // SEÇÃO - RESUMO OPERAÇÃO (índices 51-54)
   {
     name: "RESUMO",
     type: "formula",
@@ -109,20 +132,45 @@ const MASTER_STRUCTURE: FieldConfig[] = [
     type: "formula",
     formula: "=SOMA([@[APROVAÇÃO CLIENTE]]-[@[VALOR USD EFETIVO]])",
   },
+
+  // SEÇÃO - RESULTADO (índice 55)
   {
     name: "RESULTADO",
     type: "formula",
     formula: "=SOMA([@[APROVAÇÃO CLIENTE]]-[@RESUMO])",
   },
+
+  // SEÇÃO - CRED NAC NEEMAN (índice 56)
   {
     name: "CC NEMAN",
     type: "formula",
     formula: "=[@[DESP. OPE. ENVI. NEEMAN]]-[@[PGTO EFETIVO NEEMAN]]",
   },
+
+  // SEÇÃO - ANDAMENTO PROCESSO (índices 57-60)
   { name: "STATUS GERAL", type: "manual" },
   { name: "DESTINO", type: "manual" },
   { name: "OBSERVAÇÃO2", type: "manual" },
   { name: "DATA FINAL", type: "manual" },
+];
+
+// Estrutura de seções para mesclagem no Excel
+const SECTIONS = [
+  { name: "VALOR ADUNANEIRO - DI", startIndex: 0, endIndex: 4 },
+  { name: "FECHAMENTO CAMBIO D.I - MARCHA", startIndex: 5, endIndex: 12 },
+  { name: "PGTO ANDIAN. NACIONALIZAÇÃO", startIndex: 13, endIndex: 13 },
+  { name: "DESPESAS ADUNEIRAS", startIndex: 14, endIndex: 16 },
+  { name: "IMPOSTO", startIndex: 17, endIndex: 22 },
+  { name: "DESPESAS OPERACIONAIS", startIndex: 23, endIndex: 33 },
+  { name: "OPERAÇÃO TRADING", startIndex: 34, endIndex: 44 },
+  { name: "PGTO NACIONA.NEEMAN", startIndex: 45, endIndex: 45 },
+  { name: "STATUS NEEMAN", startIndex: 46, endIndex: 46 },
+  { name: "PGTO MARCHA ARMAZ", startIndex: 47, endIndex: 48 },
+  { name: "IMPOSTOS IR CSLL", startIndex: 49, endIndex: 50 },
+  { name: "RESUMO OPERAÇÃO", startIndex: 51, endIndex: 54 },
+  { name: "RESULTADO", startIndex: 55, endIndex: 55 },
+  { name: "CRED NAC NEEMAN", startIndex: 56, endIndex: 56 },
+  { name: "ANDAMENTO PROCESSO", startIndex: 57, endIndex: 60 },
 ];
 
 type DataRow = Record<string, any>;
@@ -397,26 +445,252 @@ export default function Page() {
       return orderedRow;
     });
 
+    // Cria worksheet normalmente (cabeçalho na linha 1, dados a partir da linha 2)
     const worksheet = XLSX.utils.json_to_sheet(orderedData, {
       header: baseHeaders,
     });
 
+    const maxRow = orderedData.length + 1; // dados + cabeçalho
+    const maxCol = MASTER_STRUCTURE.length - 1;
+
+    // Paleta de cores para as seções (cores mais escuras para diferenciar dos dados)
+    const sectionColors = [
+      "5DADE2", // Azul médio - VALOR ADUNANEIRO - DI
+      "52BE80", // Verde médio - FECHAMENTO CAMBIO D.I - MARCHA
+      "F4D03F", // Amarelo médio - PGTO ANDIAN. NACIONALIZAÇÃO
+      "EC7063", // Rosa médio - DESPESAS ADUNEIRAS
+      "BB8FCE", // Roxo médio - IMPOSTO
+      "5DADE2", // Azul médio - DESPESAS OPERACIONAIS
+      "F39C12", // Laranja médio - OPERAÇÃO TRADING
+      "1ABC9C", // Turquesa médio - PGTO NACIONA.NEEMAN
+      "F7DC6F", // Dourado médio - STATUS NEEMAN
+      "A569BD", // Lavanda médio - PGTO MARCHA ARMAZ
+      "3498DB", // Azul mais escuro - IMPOSTOS IR CSLL
+      "E74C3C", // Vermelho salmão - RESUMO OPERAÇÃO
+      "27AE60", // Verde mais escuro - RESULTADO
+      "F1C40F", // Amarelo ouro - CRED NAC NEEMAN
+      "C39BD3", // Roxo rosado - ANDAMENTO PROCESSO
+    ];
+
+    // Função auxiliar para encontrar a cor de uma seção baseada no índice da coluna
+    const getSectionColor = (colIndex: number): string => {
+      const section = SECTIONS.find(
+        (s) => colIndex >= s.startIndex && colIndex <= s.endIndex
+      );
+      if (section) {
+        const sectionIndex = SECTIONS.indexOf(section);
+        return sectionColors[sectionIndex % sectionColors.length];
+      }
+      return "FFFFFF"; // Branco como padrão
+    };
+
+    // Função auxiliar para obter o formato de moeda apropriado
+    const getCurrencyFormat = (fieldName: string): string | null => {
+      const fieldNameUpper = fieldName.toUpperCase();
+
+      // Campos que devem receber formatação de moeda mesmo tendo palavras comuns
+      const currencyFields = [
+        "FRETE AO CLIENTE",
+        "APROVAÇÃO CLIENTE",
+        "CUSTO CLIENTE",
+        "VALOR USD CLIENTE",
+      ];
+
+      // Verifica se é um campo que deve ter formatação de moeda
+      if (
+        currencyFields.some((currency) =>
+          fieldNameUpper.includes(currency.toUpperCase())
+        )
+      ) {
+        // VALOR USD CLIENTE usa formato contábil de dólar ($) - símbolo à esquerda, valor à direita
+        if (fieldNameUpper.includes("VALOR USD CLIENTE")) {
+          return '_("$"* #,##0.00_);_("$"* -#,##0.00_);_("$"* "-"??_);_(@_)'; // Formato contábil dólar
+        }
+        // Demais campos de moeda usam formato contábil Real brasileiro (R$) - símbolo à esquerda, valor à direita
+        // Formato: positivo; negativo; zero; texto
+        return '_("R$"* #,##0.00_);_("R$"* -#,##0.00_);_("R$"* "-"??_);_(@_)'; // Formato contábil Real
+      }
+
+      // Lista de campos que NÃO devem ser formatados como moeda (verificação exata)
+      const nonCurrencyFields = [
+        "STATUS DI",
+        "STATUS SWIFT",
+        "STATUS FINANCEIRO",
+        "STATUS NEEMAN",
+        "STATUS GERAL",
+        "DESTINO",
+        "OBSERVAÇÃO",
+        "OBSERVAÇÃO2",
+        "DATA FINAL",
+        "NF EMITIDA",
+        "COD. CLIENTE",
+      ];
+
+      // Verificação específica para "CLIENTE" (apenas o campo exato, não campos que contêm "CLIENTE")
+      if (fieldNameUpper === "CLIENTE") {
+        return null;
+      }
+
+      // Se está na lista de exceções, não formata como moeda
+      if (
+        nonCurrencyFields.some(
+          (nonCurrency) => fieldNameUpper === nonCurrency.toUpperCase()
+        )
+      ) {
+        return null;
+      }
+
+      // Demais campos usam formato contábil Real brasileiro (R$) - símbolo à esquerda, valor à direita
+      // Isso inclui: TX, TAXA, FRETE AO CLIENTE, todas DESPESAS OPERACIONAIS, APROVAÇÃO CLIENTE, CUSTO CLIENTE
+      // Formato: positivo; negativo; zero; texto
+      return '_("R$"* #,##0.00_);_("R$"* -#,##0.00_);_("R$"* "-"??_);_(@_)'; // Formato contábil Real
+    };
+
+    // Estilo de borda grossa para todas as células
+    const thickBorder = {
+      top: { style: "thin", color: { rgb: "000000" } },
+      bottom: { style: "thin", color: { rgb: "000000" } },
+      left: { style: "thin", color: { rgb: "000000" } },
+      right: { style: "thin", color: { rgb: "000000" } },
+    };
+
+    // Primeiro, move dados para começar na linha 3 (de trás para frente para evitar sobrescrita)
+    for (let rowIndex = maxRow; rowIndex >= 2; rowIndex--) {
+      MASTER_STRUCTURE.forEach((field, colIndex) => {
+        const excelCol = XLSX.utils.encode_col(colIndex);
+        const oldCell = `${excelCol}${rowIndex}`;
+        const newCell = `${excelCol}${rowIndex + 1}`;
+
+        if (
+          worksheet[oldCell] &&
+          (worksheet[oldCell].v !== undefined ||
+            worksheet[oldCell].f !== undefined)
+        ) {
+          worksheet[newCell] = worksheet[oldCell];
+          // Aplica bordas, cor de fundo alternada e formatação de moeda nas células de dados
+          if (rowIndex >= 2) {
+            if (!worksheet[newCell].s) {
+              worksheet[newCell].s = {};
+            }
+            worksheet[newCell].s.border = thickBorder;
+            // Calcula se a linha é ímpar ou par (linha 3 = primeira linha de dados = ímpar)
+            const dataRowIndex = rowIndex + 1 - 3; // Ajusta para começar em 0 na linha 3
+            const rowColor = dataRowIndex % 2 === 0 ? "CAEDFB" : "FFFFFF"; // Azul claro para ímpares, branco para pares
+            worksheet[newCell].s.fill = {
+              fgColor: { rgb: rowColor },
+              patternType: "solid",
+            };
+            // Aplica formatação de moeda se necessário
+            const field = MASTER_STRUCTURE[colIndex];
+            if (field) {
+              const currencyFormat = getCurrencyFormat(field.name);
+              if (currencyFormat) {
+                worksheet[newCell].z = currencyFormat;
+              }
+            }
+          }
+          delete worksheet[oldCell];
+        }
+      });
+    }
+
+    // Move cabeçalhos da linha 1 para linha 2 e aplica cor de fundo
+    MASTER_STRUCTURE.forEach((field, colIndex) => {
+      const excelCol = XLSX.utils.encode_col(colIndex);
+      const oldHeaderCell = `${excelCol}1`;
+      const newHeaderCell = `${excelCol}2`;
+
+      if (worksheet[oldHeaderCell]) {
+        worksheet[newHeaderCell] = worksheet[oldHeaderCell];
+        const sectionColor = getSectionColor(colIndex);
+        worksheet[newHeaderCell].s = {
+          alignment: { horizontal: "center", vertical: "center" },
+          fill: {
+            fgColor: { rgb: sectionColor },
+            patternType: "solid",
+          },
+          font: { bold: true, sz: 11, color: { rgb: "000000" } },
+          border: thickBorder,
+        };
+        delete worksheet[oldHeaderCell];
+      }
+    });
+
+    // Adiciona linha de seções na linha 1
+    SECTIONS.forEach((section, index) => {
+      const startCol = XLSX.utils.encode_col(section.startIndex);
+      const startCell = `${startCol}1`;
+
+      // Seleciona cor da paleta (cicla se houver mais seções que cores)
+      const color = sectionColors[index % sectionColors.length];
+
+      // Define o valor da célula mesclada
+      worksheet[startCell] = { v: section.name, t: "s" };
+      worksheet[startCell].s = {
+        alignment: { horizontal: "center", vertical: "center" },
+        fill: {
+          fgColor: { rgb: color },
+          patternType: "solid",
+        },
+        font: { bold: true, sz: 11, color: { rgb: "000000" } },
+        border: thickBorder,
+      };
+
+      // Adiciona merge
+      if (!worksheet["!merges"]) {
+        worksheet["!merges"] = [];
+      }
+      worksheet["!merges"].push({
+        s: { c: section.startIndex, r: 0 },
+        e: { c: section.endIndex, r: 0 },
+      });
+    });
+
+    // Ajusta fórmulas para a nova posição e aplica bordas nas células de dados
     orderedData.forEach((row, rowIndex) => {
       MASTER_STRUCTURE.forEach((field, colIndex) => {
+        const excelCol = XLSX.utils.encode_col(colIndex);
+        const cellAddress = `${excelCol}${rowIndex + 3}`; // linha 3 em diante
+
         if (field.type === "formula" && field.formula) {
-          const excelCol = XLSX.utils.encode_col(colIndex);
-          const cellAddress = `${excelCol}${rowIndex + 2}`;
           const excelFormula = convertFormulaToExcelFormat(
             field.formula,
-            rowIndex + 1
+            rowIndex + 2 // ajuste para linha 3
           );
+          if (!worksheet[cellAddress]) {
+            worksheet[cellAddress] = {};
+          }
+          worksheet[cellAddress].f = excelFormula.replace(/^=/, "");
+        }
 
-          worksheet[cellAddress] = {
-            f: excelFormula.replace(/^=/, ""),
+        // Aplica bordas, cor de fundo alternada e formatação de moeda apenas em células com conteúdo
+        if (
+          worksheet[cellAddress] &&
+          (worksheet[cellAddress].v !== undefined ||
+            worksheet[cellAddress].f !== undefined)
+        ) {
+          if (!worksheet[cellAddress].s) {
+            worksheet[cellAddress].s = {};
+          }
+          worksheet[cellAddress].s.border = thickBorder;
+          // Linhas ímpares (rowIndex 0, 2, 4...) = azul, linhas pares (rowIndex 1, 3, 5...) = branco
+          const rowColor = rowIndex % 2 === 0 ? "CAEDFB" : "FFFFFF"; // Azul claro para ímpares, branco para pares
+          worksheet[cellAddress].s.fill = {
+            fgColor: { rgb: rowColor },
+            patternType: "solid",
           };
+
+          // Aplica formatação de moeda se necessário
+          const currencyFormat = getCurrencyFormat(field.name);
+          if (currencyFormat) {
+            worksheet[cellAddress].z = currencyFormat;
+          }
         }
       });
     });
+
+    // Ajusta o range do worksheet
+    worksheet["!ref"] = `A1:${XLSX.utils.encode_col(maxCol)}${maxRow + 2}`;
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Dados Consolidados");
@@ -514,14 +788,14 @@ export default function Page() {
                         onClick={() => setShowMapping(false)}
                         variant="ghost"
                         size="sm"
-                        className="text-white hover:bg-gray-800"
+                        className="text-white hover:bg-gray-800 hover:text-white"
                       >
                         <X className="h-5 w-5" />
                       </Button>
                     </div>
                   </div>
 
-                  <div className="p-6">
+                  <div className="p-5">
                     {/* Search and Filter */}
                     <div className="mb-6 space-y-4">
                       <div className="relative">
@@ -642,7 +916,7 @@ export default function Page() {
                         onClick={() => setShowMapping(!showMapping)}
                         size="sm"
                         variant={showMapping ? "default" : "outline"}
-                        className="gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white"
+                        className="gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
                       >
                         <Settings className="h-4 w-4" />
                         {showMapping ? "Fechar" : "Configurar"}
@@ -707,7 +981,9 @@ export default function Page() {
                           </div>
                           <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                             <div className="text-2xl font-bold text-gray-900">
-                              {baseData.length}
+                              {baseData.length - 1 < 0
+                                ? 0
+                                : baseData.length - 1}
                             </div>
                             <div className="text-xs text-gray-600">
                               Registros
@@ -722,52 +998,87 @@ export default function Page() {
                 {/* Extra Files */}
                 <Card className="overflow-hidden border border-gray-200">
                   <div className="bg-gray-900 p-4 text-white">
-                    <div className="flex items-center gap-3">
-                      <Plus className="h-6 w-6" />
-                      <div>
-                        <h2 className="text-lg font-bold">Planilhas Avulsas</h2>
-                        <p className="text-sm text-gray-300">
-                          Adicione múltiplos arquivos
-                        </p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Plus className="h-6 w-6" />
+                        <div>
+                          <h2 className="text-lg font-bold">
+                            Planilhas Avulsas
+                          </h2>
+                          <p className="text-sm text-gray-300">
+                            Adicione múltiplos arquivos
+                          </p>
+                        </div>
                       </div>
+                      {extraFiles.length > 0 && (
+                        <label>
+                          <input
+                            id="extra-files-input"
+                            type="file"
+                            className="hidden"
+                            accept=".xlsx,.xls,.csv"
+                            multiple
+                            onChange={handleExtraFilesUpload}
+                            disabled={!baseFile}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
+                            disabled={!baseFile}
+                            onClick={() => {
+                              const input = document.getElementById(
+                                "extra-files-input"
+                              ) as HTMLInputElement;
+                              input?.click();
+                            }}
+                          >
+                            <Plus className="h-4 w-4" />
+                            Adicionar mais
+                          </Button>
+                        </label>
+                      )}
                     </div>
                   </div>
 
                   <div className="p-6">
-                    <label
-                      className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg transition-all mb-4 ${
-                        !baseFile
-                          ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
-                          : "border-gray-300 bg-gray-50 hover:bg-gray-100 cursor-pointer"
-                      }`}
-                    >
-                      <div className="flex flex-col items-center justify-center gap-2">
-                        <Plus
-                          className={`h-6 w-6 ${
-                            !baseFile ? "text-gray-300" : "text-gray-400"
-                          }`}
-                        />
-                        <div className="text-center">
-                          <p
-                            className={`text-sm font-semibold ${
-                              !baseFile ? "text-gray-400" : "text-gray-700"
+                    {extraFiles.length === 0 && (
+                      <label
+                        className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg transition-all ${
+                          !baseFile
+                            ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
+                            : "border-gray-300 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                        }`}
+                      >
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Plus
+                            className={`h-6 w-6 ${
+                              !baseFile ? "text-gray-300" : "text-gray-400"
                             }`}
-                          >
-                            {!baseFile
-                              ? "Carregue a Master primeiro"
-                              : "Adicionar planilhas"}
-                          </p>
+                          />
+                          <div className="text-center">
+                            <p
+                              className={`text-sm font-semibold ${
+                                !baseFile ? "text-gray-400" : "text-gray-700"
+                              }`}
+                            >
+                              {!baseFile
+                                ? "Carregue a Master primeiro"
+                                : "Adicionar planilhas"}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".xlsx,.xls,.csv"
-                        multiple
-                        onChange={handleExtraFilesUpload}
-                        disabled={!baseFile}
-                      />
-                    </label>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".xlsx,.xls,.csv"
+                          multiple
+                          onChange={handleExtraFilesUpload}
+                          disabled={!baseFile}
+                        />
+                      </label>
+                    )}
 
                     {extraFiles.length > 0 && (
                       <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar">
