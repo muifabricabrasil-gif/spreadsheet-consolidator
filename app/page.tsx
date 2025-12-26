@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { motion } from "motion/react";
 import {
   Upload,
@@ -105,7 +105,7 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   {
     name: "PGTO EFETIVO NEEMAN",
     type: "formula",
-    formula: "=SOMA(Tabela1[@[SISCOMEX]:[JANELA ESPECIAL]])",
+    formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
   },
 
   // SEÇÃO - STATUS NEEMAN (índice 46)
@@ -202,6 +202,13 @@ export default function Page() {
   const [mappingSearchFilter, setMappingSearchFilter] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [showHelp, setShowHelp] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({
+    current: 0,
+    total: 0,
+    currentFile: "",
+  });
+  const uploadCancelledRef = useRef(false);
 
   const [globalMapping, setGlobalMapping] = useState<CellMapping>(() => {
     const initialMapping: CellMapping = {};
@@ -329,10 +336,31 @@ export default function Page() {
   ) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
+      setIsUploading(true);
+      uploadCancelledRef.current = false;
+      setUploadProgress({
+        current: 0,
+        total: newFiles.length,
+        currentFile: "",
+      });
 
-      for (const file of newFiles) {
+      for (let i = 0; i < newFiles.length; i++) {
+        if (uploadCancelledRef.current) {
+          break;
+        }
+
+        const file = newFiles[i];
+        setUploadProgress({
+          current: i + 1,
+          total: newFiles.length,
+          currentFile: file.name,
+        });
+
         try {
           const workbook = await readExtraFile(file);
+          if (uploadCancelledRef.current) {
+            break;
+          }
           const fileMapping: FileMapping = {
             file,
             workbook,
@@ -344,11 +372,30 @@ export default function Page() {
           alert(`Erro ao ler arquivo ${file.name}`);
         }
       }
+
+      setIsUploading(false);
+      setUploadProgress({ current: 0, total: 0, currentFile: "" });
+      uploadCancelledRef.current = false;
+
+      // Limpa o input para permitir upload do mesmo arquivo novamente
+      if (e.target) {
+        e.target.value = "";
+      }
     }
+  };
+
+  const cancelUpload = () => {
+    uploadCancelledRef.current = true;
+    setIsUploading(false);
+    setUploadProgress({ current: 0, total: 0, currentFile: "" });
   };
 
   const removeExtraFile = (index: number) => {
     setExtraFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeAllExtraFiles = () => {
+    setExtraFiles([]);
   };
 
   const removeBaseFile = () => {
@@ -356,6 +403,123 @@ export default function Page() {
     setBaseData([]);
     setConsolidatedData([]);
     setExtraFiles([]);
+  };
+
+  const downloadMasterTemplate = () => {
+    // Cria worksheet vazio apenas com estrutura (seções e cabeçalhos)
+    const worksheet = XLSX.utils.aoa_to_sheet([]);
+
+    const maxCol = MASTER_STRUCTURE.length - 1;
+
+    // Paleta de cores para as seções
+    const sectionColors = [
+      "5DADE2", // Azul médio - VALOR ADUNANEIRO - DI
+      "52BE80", // Verde médio - FECHAMENTO CAMBIO D.I - MARCHA
+      "F4D03F", // Amarelo médio - PGTO ANDIAN. NACIONALIZAÇÃO
+      "EC7063", // Rosa médio - DESPESAS ADUNEIRAS
+      "BB8FCE", // Roxo médio - IMPOSTO
+      "5DADE2", // Azul médio - DESPESAS OPERACIONAIS
+      "F39C12", // Laranja médio - OPERAÇÃO TRADING
+      "1ABC9C", // Turquesa médio - PGTO NACIONA.NEEMAN
+      "F7DC6F", // Dourado médio - STATUS NEEMAN
+      "A569BD", // Lavanda médio - PGTO MARCHA ARMAZ
+      "3498DB", // Azul mais escuro - IMPOSTOS IR CSLL
+      "E74C3C", // Vermelho salmão - RESUMO OPERAÇÃO
+      "27AE60", // Verde mais escuro - RESULTADO
+      "F1C40F", // Amarelo ouro - CRED NAC NEEMAN
+      "C39BD3", // Roxo rosado - ANDAMENTO PROCESSO
+    ];
+
+    // Função auxiliar para encontrar a cor de uma seção baseada no índice da coluna
+    const getSectionColor = (colIndex: number): string => {
+      const section = SECTIONS.find(
+        (s) => colIndex >= s.startIndex && colIndex <= s.endIndex
+      );
+      if (section) {
+        const sectionIndex = SECTIONS.indexOf(section);
+        return sectionColors[sectionIndex % sectionColors.length];
+      }
+      return "FFFFFF"; // Branco como padrão
+    };
+
+    // Estilo de borda grossa para todas as células
+    const thickBorder = {
+      top: { style: "thin", color: { rgb: "000000" } },
+      bottom: { style: "thin", color: { rgb: "000000" } },
+      left: { style: "thin", color: { rgb: "000000" } },
+      right: { style: "thin", color: { rgb: "000000" } },
+    };
+
+    // Adiciona linha de seções na linha 1
+    SECTIONS.forEach((section, index) => {
+      const startCol = XLSX.utils.encode_col(section.startIndex);
+      const startCell = `${startCol}1`;
+
+      // Seleciona cor da paleta
+      const color = sectionColors[index % sectionColors.length];
+
+      // Define o valor da célula mesclada
+      worksheet[startCell] = { v: section.name, t: "s" };
+      worksheet[startCell].s = {
+        alignment: { horizontal: "center", vertical: "center" },
+        fill: {
+          fgColor: { rgb: color },
+          patternType: "solid",
+        },
+        font: { bold: true, sz: 11, color: { rgb: "000000" } },
+        border: thickBorder,
+      };
+
+      // Adiciona merge
+      if (!worksheet["!merges"]) {
+        worksheet["!merges"] = [];
+      }
+      worksheet["!merges"].push({
+        s: { c: section.startIndex, r: 0 },
+        e: { c: section.endIndex, r: 0 },
+      });
+    });
+
+    // Adiciona cabeçalhos na linha 2
+    MASTER_STRUCTURE.forEach((field, colIndex) => {
+      const excelCol = XLSX.utils.encode_col(colIndex);
+      const headerCell = `${excelCol}2`;
+
+      worksheet[headerCell] = { v: field.name, t: "s" };
+      const sectionColor = getSectionColor(colIndex);
+      worksheet[headerCell].s = {
+        alignment: { horizontal: "center", vertical: "center" },
+        fill: {
+          fgColor: { rgb: sectionColor },
+          patternType: "solid",
+        },
+        font: { bold: true, sz: 11, color: { rgb: "000000" } },
+        border: thickBorder,
+      };
+    });
+
+    // Ajusta o range do worksheet
+    worksheet["!ref"] = `A1:${XLSX.utils.encode_col(maxCol)}2`;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Dados Consolidados");
+
+    const excelBuffer = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+    });
+
+    const blob = new Blob([excelBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "planilha_master_vazia.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const getCellValue = (workbook: XLSX.WorkBook, cellAddress: string): any => {
@@ -393,12 +557,13 @@ export default function Page() {
         const endIndex = MASTER_STRUCTURE.findIndex((f) => f.name === endField);
 
         if (startIndex !== -1 && endIndex !== -1) {
-          const startCol = XLSX.utils.encode_col(startIndex);
-          const endCol = XLSX.utils.encode_col(endIndex);
-          const cellRange = `${startCol}${rowIndex + 1}:${endCol}${
-            rowIndex + 1
-          }`;
-          return cellRange;
+          // Gera soma de células individuais (ex: O3+P3+Q3+...+AH3)
+          const cells: string[] = [];
+          for (let colIndex = startIndex; colIndex <= endIndex; colIndex++) {
+            const excelCol = XLSX.utils.encode_col(colIndex);
+            cells.push(`${excelCol}${rowIndex + 1}`);
+          }
+          return cells.join("+");
         }
 
         return match;
@@ -428,6 +593,9 @@ export default function Page() {
     if (excelFormula.trim().endsWith(")")) {
       excelFormula = excelFormula.trim().slice(0, -1);
     }
+
+    // Remove qualquer "@" restante que possa ter ficado na fórmula
+    excelFormula = excelFormula.replace(/@/g, "");
 
     return excelFormula;
   };
@@ -963,18 +1131,34 @@ export default function Page() {
                           </p>
                         </div>
                       </div>
-                      <Button
-                        onClick={() => setShowMapping(!showMapping)}
-                        size="sm"
-                        variant={showMapping ? "default" : "outline"}
-                        className="gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
-                      >
-                        <Settings className="h-4 w-4" />
-                        {showMapping ? "Fechar" : "Configurar"}
-                        <span className="ml-1 px-2 py-0.5 bg-white/20 rounded-full text-xs font-semibold">
-                          {mappedFieldsCount}/{totalFields - formulaFieldsCount}
-                        </span>
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          onClick={downloadMasterTemplate}
+                          size="sm"
+                          variant="outline"
+                          className="gap-1 md:gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
+                        >
+                          <Download className="h-4 w-4" />
+                          <span className="hidden md:inline">
+                            Baixar Template
+                          </span>
+                        </Button>
+                        <Button
+                          onClick={() => setShowMapping(!showMapping)}
+                          size="sm"
+                          variant={showMapping ? "default" : "outline"}
+                          className="gap-1 md:gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
+                        >
+                          <Settings className="h-4 w-4" />
+                          <span className="hidden md:inline">
+                            {showMapping ? "Fechar" : "Configurar"}
+                          </span>
+                          <span className="ml-1 px-2 py-0.5 bg-white/20 rounded-full text-xs font-semibold hidden md:inline-flex">
+                            {mappedFieldsCount}/
+                            {totalFields - formulaFieldsCount}
+                          </span>
+                        </Button>
+                      </div>
                     </div>
                   </div>
 
@@ -1061,43 +1245,103 @@ export default function Page() {
                           </p>
                         </div>
                       </div>
-                      {extraFiles.length > 0 && (
-                        <label>
-                          <input
-                            id="extra-files-input"
-                            type="file"
-                            className="hidden"
-                            accept=".xlsx,.xls,.csv"
-                            multiple
-                            onChange={handleExtraFilesUpload}
-                            disabled={!baseFile}
-                          />
+                      {extraFiles.length > 0 && !isUploading && (
+                        <div className="flex items-center gap-2">
+                          <label>
+                            <input
+                              id="extra-files-input"
+                              type="file"
+                              className="hidden"
+                              accept=".xlsx,.xls,.csv"
+                              multiple
+                              onChange={handleExtraFilesUpload}
+                              disabled={!baseFile || isUploading}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1 md:gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
+                              disabled={!baseFile || isUploading}
+                              onClick={() => {
+                                const input = document.getElementById(
+                                  "extra-files-input"
+                                ) as HTMLInputElement;
+                                input?.click();
+                              }}
+                            >
+                              <Plus className="h-4 w-4" />
+                              <span className="hidden md:inline">
+                                Adicionar mais
+                              </span>
+                            </Button>
+                          </label>
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="gap-2 bg-white/10 hover:bg-white/20 border-white/20 text-white hover:text-white"
-                            disabled={!baseFile}
-                            onClick={() => {
-                              const input = document.getElementById(
-                                "extra-files-input"
-                              ) as HTMLInputElement;
-                              input?.click();
-                            }}
+                            className="gap-1 md:gap-2 bg-red-600/20 hover:bg-red-600/30 border-red-400/50 text-white hover:text-white"
+                            disabled={isUploading}
+                            onClick={removeAllExtraFiles}
                           >
-                            <Plus className="h-4 w-4" />
-                            Adicionar mais
+                            <X className="h-4 w-4" />
+                            <span className="hidden md:inline">
+                              Excluir todas
+                            </span>
                           </Button>
-                        </label>
+                        </div>
+                      )}
+                      {isUploading && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 bg-red-600/20 hover:bg-red-600/30 border-red-400/50 text-white hover:text-white"
+                          onClick={cancelUpload}
+                        >
+                          <X className="h-4 w-4" />
+                          Cancelar Upload
+                        </Button>
                       )}
                     </div>
                   </div>
 
                   <div className="p-6">
-                    {extraFiles.length === 0 && (
+                    {isUploading && (
+                      <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                            <span className="text-sm font-medium text-gray-900">
+                              Fazendo upload... ({uploadProgress.current} de{" "}
+                              {uploadProgress.total})
+                            </span>
+                          </div>
+                        </div>
+                        {uploadProgress.currentFile && (
+                          <p className="text-xs text-gray-600 truncate mb-2">
+                            {uploadProgress.currentFile}
+                          </p>
+                        )}
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${
+                                (uploadProgress.current /
+                                  uploadProgress.total) *
+                                100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {extraFiles.length === 0 && !isUploading && (
                       <label
                         className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg transition-all ${
-                          !baseFile
+                          !baseFile || isUploading
                             ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
                             : "border-gray-300 bg-gray-50 hover:bg-gray-100 cursor-pointer"
                         }`}
@@ -1105,13 +1349,17 @@ export default function Page() {
                         <div className="flex flex-col items-center justify-center gap-2">
                           <Plus
                             className={`h-6 w-6 ${
-                              !baseFile ? "text-gray-300" : "text-gray-400"
+                              !baseFile || isUploading
+                                ? "text-gray-300"
+                                : "text-gray-400"
                             }`}
                           />
                           <div className="text-center">
                             <p
                               className={`text-sm font-semibold ${
-                                !baseFile ? "text-gray-400" : "text-gray-700"
+                                !baseFile || isUploading
+                                  ? "text-gray-400"
+                                  : "text-gray-700"
                               }`}
                             >
                               {!baseFile
@@ -1126,7 +1374,7 @@ export default function Page() {
                           accept=".xlsx,.xls,.csv"
                           multiple
                           onChange={handleExtraFilesUpload}
-                          disabled={!baseFile}
+                          disabled={!baseFile || isUploading}
                         />
                       </label>
                     )}
@@ -1153,7 +1401,8 @@ export default function Page() {
                               variant="ghost"
                               size="sm"
                               onClick={() => removeExtraFile(index)}
-                              className="hover:bg-red-50 hover:text-red-600 shrink-0"
+                              disabled={isUploading}
+                              className="hover:bg-red-50 hover:text-red-600 shrink-0 disabled:opacity-50"
                             >
                               <X className="h-4 w-4" />
                             </Button>
@@ -1229,9 +1478,8 @@ export default function Page() {
                     </Button>
                     <Button
                       onClick={handleNewConsolidation}
-                      variant="outline"
                       size="lg"
-                      className="gap-2 px-6 py-6 text-lg font-semibold"
+                      className="gap-2 px-6 py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       Nova Consolidação
                     </Button>
