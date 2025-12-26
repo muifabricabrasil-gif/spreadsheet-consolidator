@@ -1670,7 +1670,8 @@ export default function Page() {
             {baseFile &&
               extraFiles.length > 0 &&
               !consolidatedData.length &&
-              !isProcessing && (
+              !isProcessing &&
+              !isUploading && (
                 <div className="flex justify-center mb-8">
                   <Button
                     onClick={consolidatePlanilhas}
