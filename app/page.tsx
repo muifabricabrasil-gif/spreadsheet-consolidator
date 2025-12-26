@@ -22,11 +22,20 @@ import { Input } from "@/components/ui/input";
 import * as XLSX from "xlsx-js-style";
 import { AuroraBackground } from "@/components/ui/aurora-background";
 
-type FieldConfig = {
-  name: string;
-  type: "manual" | "cell" | "formula";
+type CellCondition = {
+  priority: number;
+  type: "cell" | "formula" | "manual";
   cellAddress?: string;
   formula?: string;
+};
+
+type FieldConfig = {
+  name: string;
+  type: "manual" | "cell" | "formula" | "flex";
+  cellAddress?: string;
+  formula?: string;
+  fallbackToManual?: boolean; // Se true, quando não houver valor na célula, deixa vazio (manual)
+  cellCondition?: CellCondition[]; // Array de condições processadas por prioridade
 };
 
 const MASTER_STRUCTURE: FieldConfig[] = [
@@ -60,7 +69,14 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   { name: "OBSERVAÇÃO", type: "manual" },
 
   // SEÇÃO - PGTO ANDIAN. NACIONALIZAÇÃO (índice 13)
-  { name: "DESP. OPE. ENVI. NEEMAN", type: "manual" },
+  {
+    name: "DESP. OPE. ENVI. NEEMAN",
+    type: "flex",
+    cellCondition: [
+      { priority: 1, type: "cell", cellAddress: "J88" },
+      { priority: 2, type: "manual" },
+    ],
+  },
 
   // SEÇÃO - DESPESAS ADUNEIRAS (índices 14-16)
   { name: "SISCOMEX", type: "cell", cellAddress: "H26" },
@@ -104,8 +120,15 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   // SEÇÃO - PGTO NACIONA.NEEMAN (índice 45)
   {
     name: "PGTO EFETIVO NEEMAN",
-    type: "formula",
-    formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
+    type: "flex",
+    cellCondition: [
+      { priority: 1, type: "cell", cellAddress: "J89" },
+      {
+        priority: 2,
+        type: "formula",
+        formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
+      },
+    ],
   },
 
   // SEÇÃO - STATUS NEEMAN (índice 46)
@@ -253,19 +276,35 @@ export default function Page() {
           let json: DataRow[];
           if (hasSectionRow && range.e.r >= 2) {
             // Pula linha 1 (seções) e linha 2 (headers), lê a partir da linha 3
-            const dataRange = XLSX.utils.encode_range({
-              s: { c: 0, r: 2 }, // Começa na linha 3 (índice 2)
-              e: { c: range.e.c, r: range.e.r },
-            });
-            const dataSheet = XLSX.utils.sheet_to_json(worksheet, {
-              range: dataRange,
-              header: baseHeaders, // Usa os headers da estrutura master
-            }) as DataRow[];
-            json = dataSheet;
+            // Verifica se há dados além dos headers (linha 3 em diante)
+            if (range.e.r > 2) {
+              const dataRange = XLSX.utils.encode_range({
+                s: { c: 0, r: 2 }, // Começa na linha 3 (índice 2)
+                e: { c: range.e.c, r: range.e.r },
+              });
+              const dataSheet = XLSX.utils.sheet_to_json(worksheet, {
+                range: dataRange,
+                header: baseHeaders, // Usa os headers da estrutura master
+              }) as DataRow[];
+              json = dataSheet;
+            } else {
+              // Não há dados, apenas estrutura (seções e headers)
+              json = [];
+            }
           } else {
             // Estrutura normal: primeira linha são headers
-            json = XLSX.utils.sheet_to_json(worksheet) as DataRow[];
+            // Verifica se há mais de uma linha (além do header)
+            if (range.e.r > 0) {
+              json = XLSX.utils.sheet_to_json(worksheet) as DataRow[];
+            } else {
+              // Não há dados, apenas headers
+              json = [];
+            }
           }
+
+          // Lista de nomes de seções e headers para filtrar
+          const sectionNames = SECTIONS.map((s) => s.name.toUpperCase());
+          const fieldNames = MASTER_STRUCTURE.map((f) => f.name.toUpperCase());
 
           const normalizedData = json
             .map((row) => {
@@ -280,10 +319,40 @@ export default function Page() {
               return normalizedRow;
             })
             .filter((row) => {
-              // Filtra apenas linhas completamente vazias, mantém todas as outras
-              return Object.values(row).some(
-                (value) => value !== null && value !== undefined && value !== ""
+              // Filtra linhas completamente vazias
+              // Verifica se há pelo menos um campo com valor significativo
+              const hasValue = Object.entries(row).some(
+                ([fieldName, value]) => {
+                  if (value === null || value === undefined) return false;
+                  // Converte para string e verifica se não está vazio após trim
+                  const strValue = String(value).trim();
+                  if (strValue === "") return false;
+
+                  // Ignora valores que são apenas nomes de seções ou headers
+                  const upperValue = strValue.toUpperCase();
+                  if (sectionNames.includes(upperValue)) return false;
+                  if (
+                    fieldNames.includes(upperValue) &&
+                    fieldName.toUpperCase() !== upperValue
+                  ) {
+                    // Se o valor é um nome de campo mas não corresponde ao campo atual, ignora
+                    return false;
+                  }
+
+                  return true;
+                }
               );
+              return hasValue;
+            })
+            .filter((row) => {
+              // Filtra adicional: se todos os campos são strings vazias ou valores vazios
+              // Isso pega casos onde o XLSX criou objetos vazios
+              const allEmpty = Object.values(row).every((value) => {
+                if (value === null || value === undefined) return true;
+                const strValue = String(value).trim();
+                return strValue === "";
+              });
+              return !allEmpty;
             });
 
           resolve(normalizedData);
@@ -612,12 +681,62 @@ export default function Page() {
       const allData = [...baseData];
 
       extraFiles.forEach((fileMapping) => {
+        // Pega o código do cliente da célula H7 da planilha avulsa
+        const clientCodeFromFile = getCellValue(fileMapping.workbook, "H7");
+        const clientCodeNormalized = clientCodeFromFile
+          ? String(clientCodeFromFile).trim().toUpperCase()
+          : "";
+
         const newRow: DataRow = {};
 
         MASTER_STRUCTURE.forEach((field) => {
-          if (field.type === "formula") {
+          // Campos do tipo "flex" - processa condições por prioridade
+          if (field.type === "flex" && field.cellCondition) {
+            // Ordena condições por prioridade (menor número = maior prioridade)
+            const sortedConditions = [...field.cellCondition].sort(
+              (a, b) => a.priority - b.priority
+            );
+
+            let valueSet = false;
+
+            for (const condition of sortedConditions) {
+              if (valueSet) break;
+
+              if (condition.type === "cell" && condition.cellAddress) {
+                // Tenta pegar valor da célula
+                const cellValue = getCellValue(
+                  fileMapping.workbook,
+                  condition.cellAddress
+                );
+                // Verifica se há valor válido (não vazio, não null, não undefined)
+                const hasValue =
+                  cellValue !== "" &&
+                  cellValue !== null &&
+                  cellValue !== undefined;
+                if (hasValue) {
+                  newRow[field.name] = cellValue;
+                  valueSet = true;
+                }
+              } else if (condition.type === "formula" && condition.formula) {
+                // Usa a fórmula
+                newRow[field.name] = "__FORMULA__";
+                valueSet = true;
+              } else if (condition.type === "manual") {
+                // Deixa vazio (manual)
+                newRow[field.name] = "";
+                valueSet = true;
+              }
+            }
+
+            // Se nenhuma condição foi satisfeita, deixa vazio por padrão
+            if (!valueSet) {
+              newRow[field.name] = "";
+            }
+          }
+          // Casos normais
+          else if (field.type === "formula") {
             newRow[field.name] = "__FORMULA__";
-          } else {
+          } else if (field.type === "cell") {
             const cellAddress = globalMapping[field.name];
             if (cellAddress && cellAddress.trim() !== "") {
               newRow[field.name] = getCellValue(
@@ -627,10 +746,72 @@ export default function Page() {
             } else {
               newRow[field.name] = "";
             }
+          } else {
+            // Tipo manual ou outros
+            newRow[field.name] = "";
           }
         });
 
-        allData.push(newRow);
+        // Verifica se já existe um registro com o mesmo código de cliente
+        if (clientCodeNormalized) {
+          const existingIndex = allData.findIndex((row) => {
+            const existingCode = row["COD. CLIENTE"]
+              ? String(row["COD. CLIENTE"]).trim().toUpperCase()
+              : "";
+            return existingCode === clientCodeNormalized;
+          });
+
+          if (existingIndex !== -1) {
+            // Mescla inteligente: preserva campos manuais preenchidos, atualiza campos de célula
+            const existingRow = allData[existingIndex];
+            const mergedRow: DataRow = { ...existingRow };
+
+            MASTER_STRUCTURE.forEach((field) => {
+              const existingValue = existingRow[field.name];
+              const newValue = newRow[field.name];
+
+              // Para campos MANUAIS: preserva se já estava preenchido na master
+              if (field.type === "manual") {
+                if (
+                  existingValue !== "" &&
+                  existingValue !== null &&
+                  existingValue !== undefined
+                ) {
+                  // Mantém o valor existente da master
+                  mergedRow[field.name] = existingValue;
+                } else {
+                  // Se estava vazio, pode usar o novo valor (se houver)
+                  mergedRow[field.name] = newValue || "";
+                }
+              }
+              // Para campos CELL: sempre atualiza com o valor da avulsa
+              else if (field.type === "cell") {
+                mergedRow[field.name] = newValue;
+              }
+              // Para campos FORMULA: mantém como fórmula
+              else if (field.type === "formula") {
+                mergedRow[field.name] = "__FORMULA__";
+              }
+              // Para campos FLEX: usa o valor processado da avulsa
+              else if (field.type === "flex") {
+                mergedRow[field.name] = newValue;
+              }
+              // Outros casos: mantém o existente ou usa o novo
+              else {
+                mergedRow[field.name] =
+                  newValue !== undefined ? newValue : existingValue;
+              }
+            });
+
+            allData[existingIndex] = mergedRow;
+          } else {
+            // Adiciona como nova linha
+            allData.push(newRow);
+          }
+        } else {
+          // Se não houver código de cliente, adiciona como nova linha
+          allData.push(newRow);
+        }
       });
 
       setConsolidatedData(allData);
@@ -871,15 +1052,32 @@ export default function Page() {
         const excelCol = XLSX.utils.encode_col(colIndex);
         const cellAddress = `${excelCol}${rowIndex + 3}`; // linha 3 em diante
 
-        if (field.type === "formula" && field.formula) {
-          const excelFormula = convertFormulaToExcelFormat(
-            field.formula,
-            rowIndex + 2 // ajuste para linha 3
-          );
-          if (!worksheet[cellAddress]) {
-            worksheet[cellAddress] = {};
+        // Verifica se precisa aplicar fórmula
+        if (row[field.name] === "__FORMULA__") {
+          let formulaToUse: string | undefined;
+
+          // Se for campo flex, encontra a condição com fórmula
+          if (field.type === "flex" && field.cellCondition) {
+            const formulaCondition = field.cellCondition.find(
+              (c) => c.type === "formula" && c.formula
+            );
+            formulaToUse = formulaCondition?.formula;
           }
-          worksheet[cellAddress].f = excelFormula.replace(/^=/, "");
+          // Se for campo formula normal
+          else if (field.type === "formula" && field.formula) {
+            formulaToUse = field.formula;
+          }
+
+          if (formulaToUse) {
+            const excelFormula = convertFormulaToExcelFormat(
+              formulaToUse,
+              rowIndex + 2 // ajuste para linha 3
+            );
+            if (!worksheet[cellAddress]) {
+              worksheet[cellAddress] = {};
+            }
+            worksheet[cellAddress].f = excelFormula.replace(/^=/, "");
+          }
         }
 
         // Aplica bordas, cor de fundo alternada e formatação de moeda apenas em células com conteúdo
@@ -943,7 +1141,7 @@ export default function Page() {
     (v) => v && v.trim() !== ""
   ).length;
   const formulaFieldsCount = MASTER_STRUCTURE.filter(
-    (f) => f.type === "formula"
+    (f) => f.type === "formula" || f.type === "flex"
   ).length;
   const totalFields = MASTER_STRUCTURE.length;
 
@@ -967,7 +1165,9 @@ export default function Page() {
     if (selectedCategory === "mapped")
       return matchesSearch && globalMapping[field.name];
     if (selectedCategory === "formula")
-      return matchesSearch && field.type === "formula";
+      return (
+        matchesSearch && (field.type === "formula" || field.type === "flex")
+      );
     if (selectedCategory === "manual")
       return matchesSearch && field.type === "manual";
 
@@ -1056,7 +1256,7 @@ export default function Page() {
                         <div
                           key={field.name}
                           className={`p-4 rounded-lg border transition-all ${
-                            field.type === "formula"
+                            field.type === "formula" || field.type === "flex"
                               ? "bg-gray-50 border-gray-300"
                               : globalMapping[field.name]
                               ? "bg-green-50 border-green-200"
@@ -1067,13 +1267,15 @@ export default function Page() {
                             <span className="font-medium text-sm text-gray-900 truncate">
                               {field.name}
                             </span>
-                            {field.type === "formula" && (
+                            {(field.type === "formula" ||
+                              field.type === "flex") && (
                               <span className="px-2 py-0.5 bg-gray-200 text-gray-700 rounded text-xs font-medium shrink-0">
-                                Auto
+                                {field.type === "flex" ? "Flex" : "Auto"}
                               </span>
                             )}
                             {globalMapping[field.name] &&
-                              field.type !== "formula" && (
+                              field.type !== "formula" &&
+                              field.type !== "flex" && (
                                 <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                               )}
                           </div>
@@ -1084,6 +1286,29 @@ export default function Page() {
                               disabled
                               className="bg-gray-100 border-gray-300 text-gray-600 cursor-not-allowed text-xs"
                             />
+                          ) : field.type === "flex" ? (
+                            <div className="space-y-1">
+                              {field.cellCondition?.map((condition, idx) => (
+                                <div
+                                  key={idx}
+                                  className="text-xs text-gray-600 bg-gray-100 p-2 rounded"
+                                >
+                                  <span className="font-medium">
+                                    {condition.priority}. {condition.type}
+                                  </span>
+                                  {condition.cellAddress && (
+                                    <span className="ml-2">
+                                      {condition.cellAddress}
+                                    </span>
+                                  )}
+                                  {condition.formula && (
+                                    <div className="mt-1 text-gray-500 truncate">
+                                      {condition.formula}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           ) : (
                             <Input
                               type="text"
@@ -1306,41 +1531,67 @@ export default function Page() {
                     </div>
                   </div>
 
-                  <div className="p-6">
+                  <div className="p-6 h-full flex flex-col">
                     {isUploading && (
-                      <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                            <span className="text-sm font-medium text-gray-900">
-                              Fazendo upload... ({uploadProgress.current} de{" "}
-                              {uploadProgress.total})
-                            </span>
+                      <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-200 p-8 max-h-[200px]">
+                        <div className="flex flex-col items-center gap-4 w-full max-w-md">
+                          {/* <div className="relative">
+                            <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="h-6 w-6 bg-blue-100 rounded-full"></div>
+                            </div>
+                          </div> */}
+
+                          <div className="text-center w-full">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                              Fazendo upload...
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {uploadProgress.current} de {uploadProgress.total}{" "}
+                              arquivo(s)
+                            </p>
                           </div>
-                        </div>
-                        {uploadProgress.currentFile && (
-                          <p className="text-xs text-gray-600 truncate mb-2">
-                            {uploadProgress.currentFile}
-                          </p>
-                        )}
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                            style={{
-                              width: `${
+
+                          {uploadProgress.currentFile && (
+                            <div className="w-full bg-white/60 rounded-lg p-3 border border-blue-200">
+                              <p className="text-xs font-medium text-gray-700 mb-1">
+                                Arquivo atual:
+                              </p>
+                              <p className="text-sm text-gray-900 truncate font-medium">
+                                {uploadProgress.currentFile}
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="w-full space-y-2">
+                            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
+                              <div
+                                className="bg-gradient-to-r from-blue-500 to-indigo-600 h-3 rounded-full transition-all duration-500 ease-out shadow-sm"
+                                style={{
+                                  width: `${
+                                    (uploadProgress.current /
+                                      uploadProgress.total) *
+                                    100
+                                  }%`,
+                                }}
+                              />
+                            </div>
+                            <p className="text-xs text-center text-gray-500">
+                              {Math.round(
                                 (uploadProgress.current /
                                   uploadProgress.total) *
-                                100
-                              }%`,
-                            }}
-                          />
+                                  100
+                              )}
+                              % concluído
+                            </p>
+                          </div>
                         </div>
                       </div>
                     )}
 
                     {extraFiles.length === 0 && !isUploading && (
                       <label
-                        className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg transition-all ${
+                        className={`flex flex-col items-center justify-center w-full h-full border-2 border-dashed rounded-lg transition-all ${
                           !baseFile || isUploading
                             ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-50"
                             : "border-gray-300 bg-gray-50 hover:bg-gray-100 cursor-pointer"
@@ -1379,8 +1630,8 @@ export default function Page() {
                       </label>
                     )}
 
-                    {extraFiles.length > 0 && (
-                      <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar">
+                    {extraFiles.length > 0 && !isUploading && (
+                      <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar pr-1">
                         {extraFiles.map((fileMapping, index) => (
                           <div
                             key={index}
@@ -1471,7 +1722,7 @@ export default function Page() {
                     <Button
                       onClick={downloadConsolidatedFile}
                       size="lg"
-                      className="gap-2 px-8 py-6 text-lg font-semibold bg-gray-900 hover:bg-gray-800"
+                      className="gap-2 px-8 py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       <Download className="h-6 w-6" />
                       Baixar Planilha
@@ -1479,7 +1730,7 @@ export default function Page() {
                     <Button
                       onClick={handleNewConsolidation}
                       size="lg"
-                      className="gap-2 px-6 py-6 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                      className="gap-2 px-6 py-6 text-lg font-semibold bg-gray-900 hover:bg-gray-800 text-white"
                     >
                       Nova Consolidação
                     </Button>
