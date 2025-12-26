@@ -39,11 +39,11 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   },
   { name: "STATUS DI", type: "manual" },
   { name: "VALOR USD CLIENTE", type: "cell", cellAddress: "H24" },
-  { name: "TX  PREVIA CLIENTE", type: "manual" },
+  { name: "TX  PREVIA CLIENTE", type: "cell", cellAddress: "K8" },
 
   // SEÇÃO - FECHAMENTO CAMBIO D.I - MARCHA (índices 5-12)
   { name: "FECHAMENTO BCO", type: "cell", cellAddress: "H24" },
-  { name: "TX", type: "manual" },
+  { name: "TX", type: "cell", cellAddress: "K10" },
   {
     name: "VALOR USD EFETIVO",
     type: "formula",
@@ -152,6 +152,16 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   { name: "DESTINO", type: "manual" },
   { name: "OBSERVAÇÃO2", type: "manual" },
   { name: "DATA FINAL", type: "manual" },
+
+  // SEÇÃO - VALOR FINAL CUSTO CLIENTE (índices 61-64)
+  { name: "VALOR CUSTO CLIENTE", type: "cell", cellAddress: "J87" },
+  {
+    name: "ESTIMATIVA NACIONALIZAÇÃO EXTRATO C6",
+    type: "cell",
+    cellAddress: "J88",
+  },
+  { name: "CUSTO NACIONALIZAÇÃO NEEMAN", type: "cell", cellAddress: "J89" },
+  { name: "DIFERENÇA NACIONALIZAÇÃO", type: "cell", cellAddress: "J90" },
 ];
 
 // Estrutura de seções para mesclagem no Excel
@@ -171,6 +181,7 @@ const SECTIONS = [
   { name: "RESULTADO", startIndex: 55, endIndex: 55 },
   { name: "CRED NAC NEEMAN", startIndex: 56, endIndex: 56 },
   { name: "ANDAMENTO PROCESSO", startIndex: 57, endIndex: 60 },
+  { name: "VALOR FINAL CUSTO CLIENTE", startIndex: 61, endIndex: 64 },
 ];
 
 type DataRow = Record<string, any>;
@@ -215,19 +226,58 @@ export default function Page() {
           const workbook = XLSX.read(data, { type: "binary" });
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet) as DataRow[];
 
-          const normalizedData = json.map((row) => {
-            const normalizedRow: DataRow = {};
-            MASTER_STRUCTURE.forEach((field) => {
-              const fieldKey = Object.keys(row).find(
-                (key) =>
-                  key.trim().toUpperCase() === field.name.trim().toUpperCase()
+          // Verifica se a planilha tem estrutura com seções (linha 1), headers (linha 2) e dados (linha 3+)
+          // Verifica se a primeira linha contém algum nome de seção conhecido
+          const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:Z1");
+          let hasSectionRow = false;
+
+          if (range.e.r >= 0) {
+            // Verifica se a célula A1 contém algum nome de seção
+            const cellA1 = worksheet["A1"];
+            if (cellA1 && cellA1.v) {
+              const cellValue = String(cellA1.v).toUpperCase();
+              hasSectionRow = SECTIONS.some((section) =>
+                cellValue.includes(section.name.toUpperCase())
               );
-              normalizedRow[field.name] = fieldKey ? row[fieldKey] : "";
+            }
+          }
+
+          let json: DataRow[];
+          if (hasSectionRow && range.e.r >= 2) {
+            // Pula linha 1 (seções) e linha 2 (headers), lê a partir da linha 3
+            const dataRange = XLSX.utils.encode_range({
+              s: { c: 0, r: 2 }, // Começa na linha 3 (índice 2)
+              e: { c: range.e.c, r: range.e.r },
             });
-            return normalizedRow;
-          });
+            const dataSheet = XLSX.utils.sheet_to_json(worksheet, {
+              range: dataRange,
+              header: baseHeaders, // Usa os headers da estrutura master
+            }) as DataRow[];
+            json = dataSheet;
+          } else {
+            // Estrutura normal: primeira linha são headers
+            json = XLSX.utils.sheet_to_json(worksheet) as DataRow[];
+          }
+
+          const normalizedData = json
+            .map((row) => {
+              const normalizedRow: DataRow = {};
+              MASTER_STRUCTURE.forEach((field) => {
+                const fieldKey = Object.keys(row).find(
+                  (key) =>
+                    key.trim().toUpperCase() === field.name.trim().toUpperCase()
+                );
+                normalizedRow[field.name] = fieldKey ? row[fieldKey] : "";
+              });
+              return normalizedRow;
+            })
+            .filter((row) => {
+              // Filtra apenas linhas completamente vazias, mantém todas as outras
+              return Object.values(row).some(
+                (value) => value !== null && value !== undefined && value !== ""
+              );
+            });
 
           resolve(normalizedData);
         } catch (error) {
@@ -493,6 +543,7 @@ export default function Page() {
         "FRETE AO CLIENTE",
         "APROVAÇÃO CLIENTE",
         "CUSTO CLIENTE",
+        "VALOR CUSTO CLIENTE",
         "VALOR USD CLIENTE",
       ];
 
