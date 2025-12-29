@@ -40,7 +40,14 @@ type FieldConfig = {
 
 const MASTER_STRUCTURE: FieldConfig[] = [
   // SEÇÃO - VALOR ADUNANEIRO - DI (índices 0-4)
-  { name: "COD. CLIENTE", type: "manual" },
+  {
+    name: "COD. CLIENTE",
+    type: "flex",
+    cellCondition: [
+      { priority: 1, type: "cell", cellAddress: "H7" },
+      { priority: 2, type: "manual" },
+    ],
+  },
   {
     name: "VALOR FOB. DI",
     type: "formula",
@@ -120,15 +127,8 @@ const MASTER_STRUCTURE: FieldConfig[] = [
   // SEÇÃO - PGTO NACIONA.NEEMAN (índice 45)
   {
     name: "PGTO EFETIVO NEEMAN",
-    type: "flex",
-    cellCondition: [
-      { priority: 1, type: "cell", cellAddress: "J89" },
-      {
-        priority: 2,
-        type: "formula",
-        formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
-      },
-    ],
+    type: "formula",
+    formula: "=SOMA([@[SISCOMEX]:[@[JANELA ESPECIAL]]])",
   },
 
   // SEÇÃO - STATUS NEEMAN (índice 46)
@@ -883,6 +883,16 @@ export default function Page() {
       return "FFFFFF"; // Branco como padrão
     };
 
+    // Função auxiliar para obter o formato de data apropriado
+    const getDateFormat = (fieldName: string): string | null => {
+      const fieldNameUpper = fieldName.toUpperCase();
+      if (fieldNameUpper === "DATA FINAL") {
+        // Formato de data brasileiro: dd/mm/aaaa
+        return "dd/mm/yyyy";
+      }
+      return null;
+    };
+
     // Função auxiliar para obter o formato de moeda apropriado
     const getCurrencyFormat = (fieldName: string): string | null => {
       const fieldNameUpper = fieldName.toUpperCase();
@@ -894,6 +904,7 @@ export default function Page() {
         "CUSTO CLIENTE",
         "VALOR CUSTO CLIENTE",
         "VALOR USD CLIENTE",
+        "NF EMITIDA",
       ];
 
       // Verifica se é um campo que deve ter formatação de moeda
@@ -922,7 +933,6 @@ export default function Page() {
         "OBSERVAÇÃO",
         "OBSERVAÇÃO2",
         "DATA FINAL",
-        "NF EMITIDA",
         "COD. CLIENTE",
       ];
 
@@ -980,12 +990,17 @@ export default function Page() {
               fgColor: { rgb: rowColor },
               patternType: "solid",
             };
-            // Aplica formatação de moeda se necessário
+            // Aplica formatação de moeda ou data se necessário
             const field = MASTER_STRUCTURE[colIndex];
             if (field) {
               const currencyFormat = getCurrencyFormat(field.name);
               if (currencyFormat) {
                 worksheet[newCell].z = currencyFormat;
+              } else {
+                const dateFormat = getDateFormat(field.name);
+                if (dateFormat) {
+                  worksheet[newCell].z = dateFormat;
+                }
               }
             }
           }
@@ -1097,10 +1112,15 @@ export default function Page() {
             patternType: "solid",
           };
 
-          // Aplica formatação de moeda se necessário
+          // Aplica formatação de moeda ou data se necessário
           const currencyFormat = getCurrencyFormat(field.name);
           if (currencyFormat) {
             worksheet[cellAddress].z = currencyFormat;
+          } else {
+            const dateFormat = getDateFormat(field.name);
+            if (dateFormat) {
+              worksheet[cellAddress].z = dateFormat;
+            }
           }
         }
       });
@@ -1441,9 +1461,7 @@ export default function Page() {
                           </div>
                           <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
                             <div className="text-2xl font-bold text-gray-900">
-                              {baseData.length - 1 < 0
-                                ? 0
-                                : baseData.length - 1}
+                              {baseData.length}
                             </div>
                             <div className="text-xs text-gray-600">
                               Registros
